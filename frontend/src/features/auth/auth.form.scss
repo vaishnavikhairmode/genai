@@ -1,0 +1,125 @@
+@use "../../styles/button";
+@use "sass:color";
+
+$bg-page: #0d1117;
+$bg-card: #161b22;
+$bg-input: #1e2535;
+$border-color: #2a3348;
+$text-primary: #e6edf3;
+$text-muted: #7d8590;
+$accent: #ff2d78;
+
+main {
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: radial-gradient(circle at 10% 20%, #1c2230 0%, $bg-page 55%, #080b10 100%);
+
+  .form-container {
+    width: 100%;
+    max-width: 400px;
+    padding: 2.5rem 2.25rem;
+    background-color: $bg-card;
+    border-radius: 1.25rem;
+    border: 1px solid $border-color;
+    box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.45);
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+
+    h1 {
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: $text-primary;
+      letter-spacing: -0.025em;
+      text-align: center;
+
+      span {
+        color: $accent;
+      }
+    }
+  }
+
+  form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  .input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+
+    label {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: $text-primary;
+    }
+
+    input {
+      border: 1px solid $border-color;
+      background-color: $bg-input;
+      outline: none;
+      padding-inline: 1rem;
+      padding-block: 0.75rem;
+      border-radius: 0.75rem;
+      font-size: 0.95rem;
+      color: $text-primary;
+      transition: all 0.2s ease;
+
+      &::placeholder {
+        color: $text-muted;
+      }
+
+      &:focus {
+        background-color: $bg-card;
+        border-color: $accent;
+        box-shadow: 0 0 0 4px rgba(255, 45, 120, 0.14);
+      }
+    }
+  }
+
+  .error-message {
+    margin: 0;
+    padding: 0.75rem 1rem;
+    border-radius: 0.75rem;
+    background: rgba(255, 45, 120, 0.1);
+    border: 1px solid rgba(255, 45, 120, 0.28);
+    color: #ff9fbd;
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-align: center;
+  }
+
+  p {
+    font-size: 0.875rem;
+    color: $text-muted;
+    text-align: center;
+  }
+
+  a {
+    color: $accent;
+    font-weight: 600;
+    text-decoration: none;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
+  .button,
+  .primary-button {
+    background-color: $accent;
+    color: #ffffff;
+    border-radius: 0.75rem;
+    box-shadow: 0 4px 14px rgba(255, 45, 120, 0.3);
+
+    &:hover:not(:disabled) {
+      background-color: color.adjust($accent, $lightness: -10%);
+      box-shadow: 0 6px 20px rgba(255, 45, 120, 0.45);
+    }
+  }
+}

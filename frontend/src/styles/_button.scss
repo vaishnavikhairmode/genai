@@ -1,0 +1,36 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding-block: 0.8rem;
+  padding-inline: 1.25rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  border-radius: 0.75rem;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}
+
+.primary-button {
+  background-color: #6346f6; // Electric Violet
+  color: #ffffff;
+  box-shadow: 0 4px 14px rgba(99, 70, 246, 0.3);
+
+  &:hover:not(:disabled) {
+    background-color: #5235e8;
+    box-shadow: 0 6px 20px rgba(99, 70, 246, 0.45);
+    transform: translateY(-1px);
+  }
+
+  &:active:not(:disabled) {
+    transform: translateY(0);
+  }
+}
