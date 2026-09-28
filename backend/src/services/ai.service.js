@@ -7,42 +7,211 @@ const ai = new GoogleGenAI({
     apiKey: process.env.GOOGLE_GENAI_API_KEY
 })
 
-// Primary and fallback models
-const MODELS = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3-flash"]
+// Invalid names are skipped automatically
+const MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
 
-// Helper function to handle execution with retry and model fallback
-async function generateContentWithRetry({ prompt, schema, retries = 3, delay = 2000 }) {
-    for (let modelIndex = 0; modelIndex < MODELS.length; modelIndex++) {
-        const currentModel = MODELS[modelIndex]
-        
+const sleep = (ms) => new Promise((res) => setTimeout(res, ms))
+
+const isModelNotFound = (e) =>
+    e.status === 404 || e.code === 404 || e.message?.includes("NOT_FOUND")
+
+const isRetryable = (e) =>
+    e.status === 503 || e.status === 429 || e.code === 503 || e.code === 429 ||
+    e.message?.includes("UNAVAILABLE") || e.message?.includes("RESOURCE_EXHAUSTED") ||
+    e instanceof SyntaxError ||      // model returned broken JSON
+    e.name === "ZodError"            // model returned wrong shape
+
+// ---------- Provider 1: Gemini ----------
+async function generateWithGemini({ prompt, schema, retries = 3, delay = 2000 }) {
+    let lastError
+
+    for (const model of MODELS) {
         for (let attempt = 1; attempt <= retries; attempt++) {
             try {
                 const response = await ai.models.generateContent({
-                    model: currentModel,
+                    model,
                     contents: prompt,
                     config: {
                         responseMimeType: "application/json",
                         responseSchema: zodToJsonSchema(schema),
-                    }
+                    },
                 })
-                return response
+                return schema.parse(JSON.parse(response.text)) // parsed + validated
             } catch (error) {
-                const is503 = error.status === "UNAVAILABLE" || error.code === 503 || error.message?.includes("503")
-                
-                if (is503 && attempt < retries) {
-                    console.warn(`[Gemini API] 503 High demand on ${currentModel}. Retrying in ${delay / 1000}s (Attempt ${attempt}/${retries})...`)
-                    await new Promise((res) => setTimeout(res, delay))
-                    delay *= 1.5
-                } else if (is503 && modelIndex < MODELS.length - 1) {
-                    console.warn(`[Gemini API] ${currentModel} busy. Falling back to ${MODELS[modelIndex + 1]}...`)
+                lastError = error
+
+                if (isModelNotFound(error)) {
+                    console.warn(`[Gemini] ${model} not available, skipping.`)
                     break
-                } else {
-                    throw error
+                }
+                if (!isRetryable(error)) {
+                    console.warn(`[Gemini] ${model} failed (${error.status || error.code}), skipping.`)
+                    break
+                }
+
+                console.warn(`[Gemini] ${model} attempt ${attempt}/${retries} failed (${error.status || error.code || error.name}).`)
+                if (attempt < retries) {
+                    await sleep(delay * 2 ** (attempt - 1) + Math.random() * 500)
                 }
             }
         }
     }
+
+    throw lastError
 }
+
+// ---------- Provider 2: Groq (backup) ----------
+async function generateWithGroq({ prompt, schema, retries = 3 }) {
+    let lastError
+
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+                },
+                body: JSON.stringify({
+                    model: process.env.GROQ_MODEL || "openai/gpt-oss-20b",
+
+                    messages: [
+                        {
+                            role: "system",
+                            content: `
+You are an interview preparation assistant.
+
+You MUST return ONLY one JSON object.
+
+The JSON object MUST contain EXACTLY these top-level fields:
+
+1. matchScore - number between 0 and 100
+2. technicalQuestions - array of objects
+3. behavioralQuestions - array of objects
+4. skillGaps - array of objects
+5. preparationPlan - array of objects
+6. title - string
+
+technicalQuestions objects MUST contain:
+- question
+- intention
+- answer
+
+behavioralQuestions objects MUST contain:
+- question
+- intention
+- answer
+
+skillGaps objects MUST contain:
+- skill
+- severity
+
+severity MUST be exactly one of:
+"low", "medium", "high"
+
+preparationPlan objects MUST contain:
+- day - number
+- focus - string
+- tasks - array of strings
+
+Do NOT return:
+candidate
+resume
+selfDescription
+jobDescription
+interviewReport
+or any other top-level fields.
+
+Do NOT return markdown.
+Do NOT return explanations outside the JSON.
+`
+                        },
+                        {
+                            role: "user",
+                            content: prompt
+                        }
+                    ],
+
+                    response_format: {
+                        type: "json_object"
+                    },
+
+                    temperature: 0.2,
+                    max_tokens: 6000
+                }),
+            })
+
+            if (!res.ok) {
+                const errorText = await res.text()
+                const err = new Error(errorText)
+                err.status = res.status
+                throw err
+            }
+
+            const data = await res.json()
+
+            const rawContent = data.choices[0].message.content
+
+            console.log("========== GROQ RAW RESPONSE ==========")
+            console.log(rawContent)
+            console.log("========================================")
+
+            const result = JSON.parse(rawContent)
+
+            console.log("========== GROQ PARSED JSON ============")
+            console.log(JSON.stringify(result, null, 2))
+            console.log("========================================")
+
+            return schema.parse(result)
+
+        } catch (error) {
+            lastError = error
+
+            const retryable =
+                error.status === 429 ||
+                error.status >= 500 ||
+                error instanceof SyntaxError ||
+                error.name === "ZodError"
+
+            if (!retryable) {
+                throw error
+            }
+
+            console.warn(
+                `[Groq] attempt ${attempt}/${retries} failed (${error.status || error.name}).`
+            )
+
+            if (attempt < retries) {
+                await sleep(1500 * attempt)
+            }
+        }
+    }
+
+    throw lastError
+}
+
+// ---------- Orchestrator: always returns a parsed, validated object ----------
+async function generateStructured({ prompt, schema }) {
+    // Set FORCE_GROQ=true in .env to test Groq on its own
+    if (process.env.FORCE_GROQ !== "true") {
+        try {
+            return await generateWithGemini({ prompt, schema })
+        } catch (error) {
+            console.warn(`[AI] Gemini failed (${error.status || error.code || error.name}).`)
+            if (!process.env.GROQ_API_KEY) throw error
+            console.warn("[AI] Falling back to Groq.")
+        }
+    }
+
+    if (!process.env.GROQ_API_KEY) {
+        throw new Error("GROQ_API_KEY is not set")
+    }
+    return await generateWithGroq({ prompt, schema })
+}
+
+// ===============================
+// SCHEMAS
+// ===============================
 
 const interviewReportSchema = z.object({
     matchScore: z.number().describe("A score between 0 and 100 indicating how well the candidate's profile matches the job description"),
@@ -58,77 +227,65 @@ const interviewReportSchema = z.object({
     })).describe("Behavioral questions that can be asked in the interview along with their intention and how to answer them"),
     skillGaps: z.array(z.object({
         skill: z.string().describe("The skill which the candidate is lacking"),
-        severity: z.enum([ "low", "medium", "high" ]).describe("The severity of this skill gap, i.e. how important is this skill for the job and how much it can impact the candidate's chances")
+        severity: z.enum(["low", "medium", "high"]).describe("The severity of this skill gap")
     })).describe("List of skill gaps in the candidate's profile along with their severity"),
     preparationPlan: z.array(z.object({
         day: z.number().describe("The day number in the preparation plan, starting from 1"),
-        focus: z.string().describe("The main focus of this day in the preparation plan, e.g. data structures, system design, mock interviews etc."),
-        tasks: z.array(z.string()).describe("List of tasks to be done on this day to follow the preparation plan, e.g. read a specific book or article, solve a set of problems, watch a video etc.")
-    })).describe("A day-wise preparation plan for the candidate to follow in order to prepare for the interview effectively"),
+        focus: z.string().describe("The main focus of this day in the preparation plan"),
+        tasks: z.array(z.string()).describe("List of tasks to be done on this day")
+    })).describe("A day-wise preparation plan for the candidate"),
     title: z.string().describe("The title of the job for which the interview report is generated"),
 })
 
+const resumePdfSchema = z.object({
+    html: z.string().describe("The full HTML content of the resume, convertible to PDF with puppeteer")
+})
+
+// ===============================
+// SERVICE FUNCTIONS
+// ===============================
+
 async function generateInterviewReport({ resume, selfDescription, jobDescription }) {
     const prompt = `Generate an interview report for a candidate with the following details:
-                    Resume: ${resume}
-                    Self Description: ${selfDescription}
-                    Job Description: ${jobDescription}`
+Resume: ${resume || "Not provided"}
+Self Description: ${selfDescription || "Not provided"}
+Job Description: ${jobDescription}`
 
-    const response = await generateContentWithRetry({
-        prompt,
-        schema: interviewReportSchema
-    })
-
-    return JSON.parse(response.text)
+    return await generateStructured({ prompt, schema: interviewReportSchema })
 }
 
 async function generatePdfFromHtml(htmlContent) {
     const browser = await puppeteer.launch({
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-    })
-    const page = await browser.newPage()
-    await page.setContent(htmlContent, { waitUntil: "networkidle0" })
-
-    const pdfBuffer = await page.pdf({
-        format: "A4", 
-        margin: {
-            top: "20mm",
-            bottom: "20mm",
-            left: "15mm",
-            right: "15mm"
-        }
+        args: ["--no-sandbox", "--disable-setuid-sandbox"]
     })
 
-    await browser.close()
-    return pdfBuffer
+    try {
+        const page = await browser.newPage()
+        await page.setContent(htmlContent, { waitUntil: "networkidle0" })
+
+        return await page.pdf({
+            format: "A4",
+            margin: { top: "20mm", bottom: "20mm", left: "15mm", right: "15mm" }
+        })
+    } finally {
+        await browser.close()
+    }
 }
 
 async function generateResumePdf({ resume, selfDescription, jobDescription }) {
-    const resumePdfSchema = z.object({
-        html: z.string().describe("The HTML content of the resume which can be converted to PDF using any library like puppeteer")
-    })
+    const prompt = `Generate a resume for a candidate with the following details:
+Resume: ${resume || "Not provided"}
+Self Description: ${selfDescription || "Not provided"}
+Job Description: ${jobDescription}
 
-    const prompt = `Generate resume for a candidate with the following details:
-                    Resume: ${resume}
-                    Self Description: ${selfDescription}
-                    Job Description: ${jobDescription}
+The response should be a JSON object with a single field "html" containing the complete HTML of the resume, ready to convert to PDF with puppeteer.
+Tailor the resume to the job description and highlight the candidate's strengths and relevant experience.
+The HTML should be well-structured and visually clean, with simple, professional styling (inline CSS only, no external files or images).
+The content should read like a real human-written resume, not AI-generated.
+It must be ATS friendly and ideally 1-2 pages long. Only use facts present in the candidate's details; do not invent employers, degrees or numbers.`
 
-                    The response should be a JSON object with a single field "html" which contains the HTML content of the resume which can be converted to PDF using any library like puppeteer.
-                    The resume should be tailored for the given job description and should highlight the candidate's strengths and relevant experience. The HTML content should be well-formatted and structured, making it easy to read and visually appealing.
-                    The content of resume should be not sound like it's generated by AI and should be as close as possible to a real human-written resume.
-                    You can highlight the content using some colors or different font styles but the overall design should be simple and professional.
-                    The content should be ATS friendly, i.e. it should be easily parsable by ATS systems without losing important information.
-                    The resume should not be so lengthy, it should ideally be 1-2 pages long when converted to PDF. Focus on quality rather than quantity and make sure to include all the relevant information that can increase the candidate's chances of getting an interview call for the given job description.`
-
-    const response = await generateContentWithRetry({
-        prompt,
-        schema: resumePdfSchema
-    })
-
-    const jsonContent = JSON.parse(response.text)
-    const pdfBuffer = await generatePdfFromHtml(jsonContent.html)
-
-    return pdfBuffer
+    const { html } = await generateStructured({ prompt, schema: resumePdfSchema })
+    return await generatePdfFromHtml(html)
 }
 
 module.exports = { generateInterviewReport, generateResumePdf }
