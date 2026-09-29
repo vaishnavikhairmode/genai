@@ -1,11 +1,13 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useContext } from 'react'
 import "../style/home.scss"
 import { useInterview } from '../hooks/useInterview.js'
 import { useNavigate } from 'react-router-dom'
+import { AuthContext } from '../../auth/auth.context' // Adjust path if needed
 
 const Home = () => {
 
     const { loading, generateReport, reports } = useInterview()
+    const { handleLogout } = useContext(AuthContext)
     const [ jobDescription, setJobDescription ] = useState("")
     const [ selfDescription, setSelfDescription ] = useState("")
     const [ selectedFile, setSelectedFile ] = useState(null)
@@ -28,10 +30,28 @@ const Home = () => {
     }
 
     const handleGenerateReport = async () => {
+        if (!jobDescription.trim()) {
+            alert("Please provide a job description.")
+            return
+        }
+        if (!selectedFile && !selfDescription.trim()) {
+            alert("Please provide either a resume or a self-description.")
+            return
+        }
+
         const resumeFile = selectedFile
         const data = await generateReport({ jobDescription, selfDescription, resumeFile })
         if (data?._id) {
             navigate(`/interview/${data._id}`)
+        }
+    }
+
+    const onLogoutClick = async () => {
+        try {
+            await handleLogout()
+            navigate('/login')
+        } catch (error) {
+            console.error("Logout failed:", error)
         }
     }
 
@@ -45,6 +65,17 @@ const Home = () => {
 
     return (
         <div className='home-page'>
+
+            {/* Top Bar with Logout Button aligned to Top-Right Corner */}
+            <div className='top-action-bar'>
+                <button
+                    type='button'
+                    className='logout-btn'
+                    onClick={onLogoutClick}
+                >
+                    Logout
+                </button>
+            </div>
 
             {/* Page Header */}
             <header className='page-header'>
@@ -115,44 +146,23 @@ const Home = () => {
                                 </label>
                             ) : (
                                 /* Upload Confirmation Box */
-                                <div className='file-selected-card' style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justify: 'space-between',
-                                    padding: '12px 16px',
-                                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                                    border: '1px solid rgba(16, 185, 129, 0.4)',
-                                    borderRadius: '8px',
-                                    marginTop: '8px'
-                                }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', overflow: 'hidden' }}>
+                                <div className='file-selected-card'>
+                                    <div className='file-info'>
                                         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                                             <polyline points="14 2 14 8 20 8"></polyline>
                                             <polyline points="9 15 11 17 15 13"></polyline>
                                         </svg>
-                                        <div style={{ overflow: 'hidden' }}>
-                                            <p style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                                {selectedFile.name}
-                                            </p>
-                                            <p style={{ margin: 0, fontSize: '0.75rem', color: '#9ca3af' }}>
-                                                {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB • File Ready
-                                            </p>
+                                        <div className='file-details'>
+                                            <p className='file-name'>{selectedFile.name}</p>
+                                            <p className='file-meta'>{(selectedFile.size / (1024 * 1024)).toFixed(2)} MB • File Ready</p>
                                         </div>
                                     </div>
 
                                     <button
                                         type="button"
                                         onClick={handleRemoveFile}
-                                        style={{
-                                            background: 'transparent',
-                                            border: 'none',
-                                            color: '#ef4444',
-                                            cursor: 'pointer',
-                                            fontSize: '1.2rem',
-                                            padding: '4px 8px',
-                                            borderRadius: '4px'
-                                        }}
+                                        className='remove-file-btn'
                                         title="Remove File"
                                     >
                                         ✕

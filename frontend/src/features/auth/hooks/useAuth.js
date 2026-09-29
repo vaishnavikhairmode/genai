@@ -1,6 +1,6 @@
 import { useContext } from "react"
 import { AuthContext } from "../auth.context"
-import { register } from "../services/auth.api"
+import { register, login } from "../services/auth.api"
 
 export const useAuth = () => {
     const context = useContext(AuthContext)
@@ -23,5 +23,16 @@ export const useAuth = () => {
         }
     }
 
-    return { ...context, handleRegister }
+    // No global loading flag here: the Login page tracks its own loading state,
+    // so the page is never unmounted (which would clear the form).
+    const handleLogin = async (credentials) => {
+        const data = await login(credentials)
+        if (data?.token) {
+            context.setToken(data.token)
+            context.setUser(data?.user ?? null)
+        }
+        return data
+    }
+
+    return { ...context, handleRegister, handleLogin }
 }
