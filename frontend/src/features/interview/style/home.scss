@@ -529,7 +529,7 @@ $font-stack:     'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe U
 
     &:hover {
       border-color: $accent;
-      background-color: lighten($bg-card, 2%);
+      background-color: color.adjust($bg-card, $lightness: 2%);
       transform: translateY(-2px);
     }
 
